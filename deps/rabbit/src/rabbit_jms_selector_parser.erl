@@ -6,6 +6,14 @@
 
 extract_value({_Token, _Line, Value}) -> Value.
 
+process_identifier({_Token, Line, <<"JMSXDeliveryCount">>}) ->
+    %% "A clarification has been added to state that the effect of setting a
+    %% message selector on a property (such as JMSXDeliveryCount) which is set
+    %% by the provider on receive is undefined."
+    return_error(Line, "setting message selector on JMSXDeliveryCount is disallowed");
+process_identifier({_Token, _Line, Value}) ->
+    rabbit_amqp_util:jms_header_to_amqp_field_name(Value).
+
 process_like_pattern({string, Line, Value}) ->
     case unicode:characters_to_list(Value) of
         L when is_list(L) ->
@@ -210,7 +218,7 @@ yecctoken2string1(Other) ->
 
 
 
--file("rabbit_jms_selector_parser.erl", 213).
+-file("rabbit_jms_selector_parser.erl", 221).
 
 -dialyzer({nowarn_function, yeccpars2/7}).
 -compile({nowarn_unused_function,  yeccpars2/7}).
@@ -1499,7 +1507,7 @@ yeccpars2_21_(__Stack0) ->
  [___1 | __Stack] = __Stack0,
  [begin
                                
-    {identifier, rabbit_amqp_util:jms_header_to_amqp_field_name(extract_value(___1))}
+    {identifier, process_identifier(___1)}
   end | __Stack].
 
 -compile({inline,yeccpars2_22_/1}).
@@ -1827,4 +1835,4 @@ yeccpars2_86_(__Stack0) ->
   end | __Stack].
 
 
--file("rabbit_jms_selector_parser.yrl", 141).
+-file("rabbit_jms_selector_parser.yrl", 149).

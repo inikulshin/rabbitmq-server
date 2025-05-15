@@ -44,10 +44,11 @@
 -define(UNLIMITED_PREFETCH_COUNT, 2000). %% something large for ra
 %% controls the timer for closing cached segments
 -define(CACHE_SEG_TIMEOUT, 5000).
+-define(DEFAULT_MSG_PRIORITY, 4). %% defined in both AMQP and JMS
 
 -type seq() :: non_neg_integer().
 -type milliseconds() :: non_neg_integer().
--type filter() :: none | [atom()].
+-type filter() :: none | [rabbit_amqp_util:field_name()].
 
 -record(consumer, {key :: rabbit_fifo:consumer_key(),
                    % status = up :: up | cancelled,
@@ -1133,12 +1134,31 @@ msg_meta(_Msg, none) ->
     #{};
 msg_meta(Msg, FieldNames) ->
     Fields = lists:filtermap(fun(Name) ->
-                                     case mc:property(Name, Msg) of
-                                         {_Type, Val} ->
-                                             {true, {Name, Val}};
+                                     case get_field_value(Name, Msg) of
                                          undefined ->
-                                             false
+                                             false;
+                                         Val ->
+                                             {true, {Name, Val}}
                                      end
                              end, FieldNames),
     maps:merge(mc:routing_headers(Msg, []),
                maps:from_list(Fields)).
+
+get_field_value(durable, Msg) ->
+    mc:is_persistent(Msg);
+get_field_value(priority, Msg) ->
+    case mc:priority(Msg) of
+        undefined ->
+            ?DEFAULT_MSG_PRIORITY;
+        P ->
+            P
+    end;
+get_field_value(creation_time, Msg) ->
+    mc:timestamp(Msg);
+get_field_value(Name, Msg) ->
+    case mc:property(Name, Msg) of
+        {_Type, Val} ->
+            Val;
+        undefined ->
+            undefined
+    end.

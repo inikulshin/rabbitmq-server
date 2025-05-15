@@ -21,7 +21,7 @@ import static com.rabbitmq.amqp.tests.jms.TestUtils.protonConnection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
-import com.rabbitmq.amqp.tests.jms.TestUtils.Classic;
+import com.rabbitmq.amqp.tests.jms.TestUtils.*;
 import com.rabbitmq.qpid.protonj2.client.Client;
 import com.rabbitmq.qpid.protonj2.client.Delivery;
 import com.rabbitmq.qpid.protonj2.client.Receiver;
@@ -193,4 +193,550 @@ public class JmsTest {
       }
     }
   }
+
+  // Test that consumers can filter on application-specific properties
+  @Test
+  public void message_selector_application_properties(
+          @QueueArgs(boolArgs = {@QueueArgBool(name = "x-filter-enabled", value = true)})
+          Queue queue) throws Exception {
+      try (Connection connection = factory.createConnection()) {
+          Session session = connection.createSession();
+          connection.start();
+
+          testSelector(session, queue, "price = 19.99", new int[]{1});
+          testSelector(session, queue, "age >= 30", new int[]{2, 3, 5});
+          testSelector(session, queue, "premium = TRUE AND price < 40.0", new int[]{2, 5});
+          testSelector(session, queue, "region = 'Europe' OR region = 'Asia'", new int[]{1, 2});
+          testSelector(session, queue, "priority BETWEEN 2 AND 4", new int[]{1, 4, 5});
+          testSelector(session, queue, "region IN ('Australia', 'North America')", new int[]{4, 5});
+          testSelector(session, queue, "region LIKE '%America'", new int[]{4});
+          testSelector(session, queue, "region IS NULL", new int[]{3});
+          testSelector(session, queue, "category is not null", new int[]{4, 5});
+          testSelector(session, queue,
+                  "age > 30 AND premium = true OR price < 15.0 AND region LIKE '%America'",
+                  new int[]{2, 3, 4, 5});
+      }
+   }
+
+   private void testSelector(Session session, Queue queue, String selector, int[] expectedMsgIds) throws Exception {
+       MessageProducer producer = session.createProducer(queue);
+
+       sendTestMessage(session, producer, 1, 25, 19.99, 3, false, "Europe", null);
+       sendTestMessage(session, producer, 2, 35, 29.99, 1, true, "Asia", null);
+       sendTestMessage(session, producer, 3, 42, 49.99, 5, true, null, null);
+       sendTestMessage(session, producer, 4, 18, 9.99, 2, false, "North America", "Electronics");
+       sendTestMessage(session, producer, 5, 50, 39.99, 4, true, "Australia", "Books");
+
+       MessageConsumer consumer = session.createConsumer(queue, selector);
+
+       // Collect received messages
+       List<Integer> receivedMessageIds = new ArrayList<>();
+       for (int i = 0; i < expectedMsgIds.length; i++) {
+           Message message = consumer.receive(9000);
+           if (message != null) {
+               TextMessage textMessage = (TextMessage) message;
+               receivedMessageIds.add(Integer.parseInt(textMessage.getText().split(" ")[1]));
+           } else {
+               break;
+           }
+       }
+
+       // Verify no additional unexpected messages
+       Message unexpectedMessage = consumer.receive(20);
+       assertThat(unexpectedMessage).isNull();
+
+       assertThat(receivedMessageIds).containsExactly(
+               Arrays.stream(expectedMsgIds).boxed().toArray(Integer[]::new));
+
+       consumer.close();
+       producer.close();
+
+       // Clear the queue after the test
+       MessageConsumer cleanupConsumer = session.createConsumer(queue);
+       int remainingMessages = 5 - expectedMsgIds.length;
+       for (int i = 0; i < remainingMessages; i++) {
+           Message msg = cleanupConsumer.receive(9000);
+           assertThat(msg).isNotNull();
+       }
+       cleanupConsumer.close();
+   }
+
+   private void sendTestMessage(
+           Session session,
+           MessageProducer producer,
+           int messageId,
+           int age,
+           double price,
+           int priority,
+           boolean premium,
+           String region,
+           String category) throws JMSException {
+
+       TextMessage message = session.createTextMessage("Message " + messageId);
+       message.setIntProperty("age", age);
+       message.setDoubleProperty("price", price);
+       message.setIntProperty("priority", priority);
+       message.setBooleanProperty("premium", premium);
+       if (region != null) {
+           message.setStringProperty("region", region);
+       }
+       if (category != null) {
+           message.setStringProperty("category", category);
+       }
+       producer.send(message);
+   }
+
+  // Test that consumers can filter on header fields
+  @Test
+  public void message_selector_header_fields(
+          @QueueArgs(
+          boolArgs = {
+              @QueueArgBool(name = "x-filter-enabled", value = true)
+          },
+          listArgs = {
+              @QueueArgList(
+              name = "x-filter-field-names",
+              values = {
+                  "durable",
+                  "priority",
+                  "message-id",
+                  "creation-time",
+                  "correlation-id",
+                  "subject",
+                  "user-id",
+                  "group-id",
+                  "group-sequence"})
+          })
+          Queue queue) throws Exception {
+      try (Connection connection = factory.createConnection()) {
+          Session session = connection.createSession();
+          connection.start();
+
+          // "Message header field references are restricted to
+          // JMSDeliveryMode, JMSPriority, JMSMessageID, JMSTimestamp, JMSCorrelationID, and JMSType."
+          // https://jakarta.ee/specifications/messaging/3.1/jakarta-messaging-spec-3.1#message-selector-syntax
+          testJMSDeliveryMode(session, queue);
+          testJMSPriority(session, queue);
+          testJMSMessageID(session, queue);
+          testJMSTimestamp(session, queue);
+          testJMSCorrelationID(session, queue);
+          testJMSType(session, queue);
+
+          // reserved 'JMSX' property names
+          testJMSXUserID(session, queue);
+          testJMSXAppID(session, queue);
+          testJMSXGroupID(session, queue);
+          // We do not test setting a message selector on JMSXDeliveryCount because:
+          // "the effect of setting a message selector on a property (such as JMSXDeliveryCount)
+          // which is set by the provider on receive is undefined."
+          // https://jakarta.ee/specifications/messaging/3.1/jakarta-messaging-spec-3.1#jmsxdeliverycount-jms_spec-42
+      }
+  }
+
+  private void testJMSDeliveryMode(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+
+      // For now we can only write a test where some AMQP header section field has a non-default value,
+      // e.g. priority is set to a value other than the default of 4.
+      // Only then will the Qpid JMS client send the durable field in the AMQP header section.
+      // Once https://issues.apache.org/jira/browse/QPIDJMS-608 is resolved, we can remove below line.
+      producer.setPriority(3);
+
+      // default is DeliveryMode.PERSISTENT
+      TextMessage msg1 = session.createTextMessage("msg 1");
+      producer.send(msg1);
+
+      producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+      TextMessage msg2 = session.createTextMessage("msg 2");
+      producer.send(msg2);
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSDeliveryMode <> 'PERSISTENT'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("msg 2");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSDeliveryMode = 'PERSISTENT'");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("msg 1");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      producer.setDeliveryMode(DeliveryMode.PERSISTENT);
+      TextMessage msg3 = session.createTextMessage("msg 3");
+      msg3.setStringProperty("key1", "PERSISTENT");
+      msg3.setStringProperty("key2", "NON_PERSISTENT");
+      producer.send(msg3);
+
+      producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+      TextMessage msg4 = session.createTextMessage("msg 4");
+      msg4.setStringProperty("key1", "PERSISTENT");
+      msg4.setStringProperty("key2", "NON_PERSISTENT");
+      producer.send(msg4);
+
+      // Let's test that matching JMSDeliveryMode works not only with string literals
+      // but also with other identifiers that have a string value.
+      consumer = session.createConsumer(queue, "key2 = JMSDeliveryMode");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("msg 4");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "key1 = JMSDeliveryMode");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("msg 3");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      producer.close();
+  }
+
+  private void testJMSPriority(Session session, Queue queue) throws Exception {
+      // "The message producer's default priority is 4."
+      MessageProducer producer = session.createProducer(queue);
+      TextMessage msg = session.createTextMessage("Default Priority");
+      producer.send(msg);
+      // "Jakarta Messaging defines a ten level priority value
+      // with 0 as the lowest priority and 9 as the highest."
+      for (int i = 0; i <= 9; i++) {
+          msg = session.createTextMessage("Priority " + i);
+          producer.setPriority(i);
+          producer.send(msg);
+      }
+      producer.close();
+
+      // Even if we didn't set a priority explicitly, the message producer's default priority is 4.
+      // Therefore, the following IS NULL selector should not match any message.
+      // We expect here the same behaviour as in ActiveMQ Artemis.
+      MessageConsumer consumer = session.createConsumer(queue, "JMSPriority IS NULL");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      // In the following assertions we check that the messages are received in the order
+      // they were sent because we know that quorum queues support only two priorities:
+      // <= 4 and > 4.
+
+      consumer = session.createConsumer(queue, "JMSPriority = 4");
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg).isNotNull();
+      assertThat(msg.getText()).isEqualTo("Default Priority");
+      assertThat(msg.getJMSPriority()).isEqualTo(4);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg).isNotNull();
+      assertThat(msg.getText()).isEqualTo("Priority 4");
+      assertThat(msg.getJMSPriority()).isEqualTo(4);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSPriority >= 5");
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(5);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(6);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(7);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(8);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(9);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSPriority BETWEEN 0 AND 3");
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(0);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(1);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(2);
+      msg = (TextMessage) consumer.receive(9000);
+      assertThat(msg.getJMSPriority()).isEqualTo(3);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+  }
+
+  private void testJMSMessageID(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+      producer.setDisableMessageID(false);
+      TextMessage msg1 = session.createTextMessage("Message 1");
+      producer.send(msg1);
+      String messageId1 = msg1.getJMSMessageID();
+      TextMessage msg2 = session.createTextMessage("Message 2");
+      producer.send(msg2);
+      String messageId2 = msg2.getJMSMessageID();
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSMessageID = '" + messageId2 + "'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 2");
+      assertThat(received.getJMSMessageID()).isEqualTo(messageId2);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSMessageID = '" + messageId1 + "'");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 1");
+      assertThat(received.getJMSMessageID()).isEqualTo(messageId1);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+  }
+
+  private void testJMSTimestamp(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+      producer.setDisableMessageTimestamp(false);
+
+      // Send messages with a delay between them
+      TextMessage msg1 = session.createTextMessage("Early Message");
+      producer.send(msg1);
+      long timestamp1 = msg1.getJMSTimestamp();
+      Thread.sleep(200);
+      TextMessage msg2 = session.createTextMessage("Later Message");
+      producer.send(msg2);
+      long timestamp2 = msg2.getJMSTimestamp();
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSTimestamp > " + timestamp1);
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Later Message");
+      assertThat(received.getJMSTimestamp()).isEqualTo(timestamp2);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSTimestamp <= " + timestamp1);
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Early Message");
+      assertThat(received.getJMSTimestamp()).isEqualTo(timestamp1);
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+  }
+
+  private void testJMSCorrelationID(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+      TextMessage msg1 = session.createTextMessage("Message 1");
+      msg1.setJMSCorrelationID("correlation-123");
+      producer.send(msg1);
+      TextMessage msg2 = session.createTextMessage("Message 2");
+      msg2.setJMSCorrelationID("correlation-456");
+      producer.send(msg2);
+      TextMessage msg3 = session.createTextMessage("Message 3");
+      producer.send(msg3);
+      TextMessage msg4 = session.createTextMessage("Message 4");
+      msg4.setJMSCorrelationIDAsBytes(new byte[]{0, 1, 2});
+      producer.send(msg4);
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSCorrelationID LIKE 'correlation-%'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 1");
+      assertThat(received.getJMSCorrelationID()).isEqualTo("correlation-123");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 2");
+      assertThat(received.getJMSCorrelationID()).isEqualTo("correlation-456");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSCorrelationID IS NOT NULL");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 4");
+      assertThat(received.getJMSCorrelationIDAsBytes()).isEqualTo(new byte[]{0, 1, 2});
+      // That's what we expect according section 3.2.1.1 of amqp-bindmap-jms-v1.0-wd10
+      assertThat(received.getJMSCorrelationID()).isEqualTo("ID:AMQP_BINARY:000102");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSCorrelationID IS NULL");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Message 3");
+      assertThat(received.getJMSCorrelationID()).isNull();
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+  }
+
+  private void testJMSType(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+
+      TextMessage msg1 = session.createTextMessage("Type 1 Message");
+      msg1.setJMSType("type-1");
+      producer.send(msg1);
+
+      TextMessage msg2 = session.createTextMessage("Type 2 Message");
+      msg2.setJMSType("type-2");
+      producer.send(msg2);
+
+      TextMessage msg3 = session.createTextMessage("No Type Message");
+      producer.send(msg3);
+
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSType = 'type-1'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Type 1 Message");
+      assertThat(received.getJMSType()).isEqualTo("type-1");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSType IS NULL");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("No Type Message");
+      assertThat(received.getJMSType()).isNull();
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSType IN ('type-1', 'type-2')");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Type 2 Message");
+      assertThat(received.getJMSType()).isEqualTo("type-2");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+  }
+
+  private void testJMSXUserID(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+
+      // Since we configured jms.populateJMSXUserID=true
+      // the MessageProducer populates the JMSXUserID value for each sent message.
+
+      TextMessage msg = session.createTextMessage("m1");
+      producer.send(msg);
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSXUserID = 'guest'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("m1");
+      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      consumer.close();
+
+      msg = session.createTextMessage("m2");
+      producer.send(msg);
+
+      consumer = session.createConsumer(queue, "'guest' <> JMSXUserID");
+      assertThat(consumer.receive(10)).isNull();
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSXUserID LIKE 'gues_'");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("m2");
+      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      consumer.close();
+
+      msg = session.createTextMessage("m3");
+      producer.send(msg);
+
+      consumer = session.createConsumer(queue, "JMSXUserID IN ('other', 'guest')");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("m3");
+      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      consumer.close();
+
+      producer.close();
+  }
+
+  private void testJMSXAppID(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+
+      TextMessage msg = session.createTextMessage("m1");
+      msg.setStringProperty("JMSXAppID", "myapp 1");
+      producer.send(msg);
+
+      msg = session.createTextMessage("m2");
+      msg.setStringProperty("JMSXAppID", "myapp 2");
+      producer.send(msg);
+
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSXAppID LIKE '%2'");
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("m2");
+      assertThat(received.getStringProperty("JMSXAppID")).isEqualTo("myapp 2");
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "'myapp 2' <> JMSXAppID");
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("m1");
+      assertThat(received.getStringProperty("JMSXAppID")).isEqualTo("myapp 1");
+      consumer.close();
+  }
+
+  private void testJMSXGroupID(Session session, Queue queue) throws Exception {
+      MessageProducer producer = session.createProducer(queue);
+
+      TextMessage msg1 = session.createTextMessage("Group A Message 1");
+      msg1.setStringProperty("JMSXGroupID", "group-A");
+      msg1.setIntProperty("JMSXGroupSeq", 1);
+      producer.send(msg1);
+
+      TextMessage msg2 = session.createTextMessage("Group B Message");
+      msg2.setStringProperty("JMSXGroupID", "group-B");
+      msg2.setIntProperty("JMSXGroupSeq", 2_000_000_000);
+      producer.send(msg2);
+
+      TextMessage msg3 = session.createTextMessage("Group A Message 2");
+      msg3.setStringProperty("JMSXGroupID", "group-A");
+      msg3.setIntProperty("JMSXGroupSeq", 2);
+      producer.send(msg3);
+
+      producer.close();
+
+      MessageConsumer consumer = session.createConsumer(queue, "JMSXGroupID = 'group-A'");
+
+      TextMessage received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Group A Message 1");
+      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-A");
+      assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(1);
+
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Group A Message 2");
+      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-A");
+      assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(2);
+
+      consumer.close();
+
+      consumer = session.createConsumer(queue, "JMSXGroupSeq > 1000000000");
+
+      received = (TextMessage) consumer.receive(9000);
+      assertThat(received).isNotNull();
+      assertThat(received.getText()).isEqualTo("Group B Message");
+      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-B");
+      assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(2_000_000_000);
+
+      consumer.close();
+    }
+
+  // Helper method to clean up the queue after a test
+  private void cleanupQueue(Session session, Queue queue, int expectedRemainingMessages) throws Exception {
+      MessageConsumer cleanupConsumer = session.createConsumer(queue);
+
+      // Consume exactly the expected number of remaining messages
+      for (int i = 0; i < expectedRemainingMessages; i++) {
+          Message msg = cleanupConsumer.receive(9000);
+          assertThat(msg).isNotNull(); // We should receive exactly the expected number
+      }
+
+      // Verify no more messages (with a short timeout)
+      assertThat(cleanupConsumer.receive(10)).isNull();
+
+      cleanupConsumer.close();
+  }
+
 }

@@ -656,13 +656,30 @@ jms_headers(_Config) ->
                 correlation_id => <<"id-456">>,
                 subject => <<"some subject">>,
                 user_id => <<"some user ID">>,
-                delivery_count => 2,
                 group_id => <<"some group ID">>,
                 group_sequence => 999
                },
-    %%TODO JMS apps don't use booleans for JMSDeliveryMode
-    true = match("JMSDeliveryMode = TRUE", Headers),
-    false = match("JMSDeliveryMode = FALSE", Headers),
+
+    true = match("JMSDeliveryMode = 'PERSISTENT'", Headers),
+    true = match("'PERSISTENT' = JMSDeliveryMode", Headers),
+    false = match("JMSDeliveryMode <> 'PERSISTENT'", Headers),
+    false = match("'PERSISTENT' <> JMSDeliveryMode", Headers),
+    false = match("JMSDeliveryMode = 'NON_PERSISTENT'", Headers),
+    false = match("'NON_PERSISTENT' = JMSDeliveryMode", Headers),
+    true = match("'NON_PERSISTENT' <> JMSDeliveryMode", Headers),
+
+    Headers2 = #{durable => false,
+                 <<"key1">> => <<"PERSISTENT">>,
+                 <<"key2">> => <<"NON_PERSISTENT">>},
+
+    true = match("JMSDeliveryMode = 'NON_PERSISTENT'", Headers2),
+    true = match("'NON_PERSISTENT' = JMSDeliveryMode", Headers2),
+    true = match("JMSDeliveryMode = key2", Headers2),
+    true = match("key2 = JMSDeliveryMode", Headers2),
+    false = match("JMSDeliveryMode = key1", Headers2),
+    false = match("key1 = JMSDeliveryMode", Headers2),
+    true = match("JMSDeliveryMode <> key1", Headers2),
+    true = match("key1 <> JMSDeliveryMode", Headers2),
 
     true = match("JMSPriority > 5", Headers),
     true = match("JMSPriority = 7", Headers),
@@ -686,10 +703,6 @@ jms_headers(_Config) ->
     true = match("JMSXUserID LIKE 'some%'", Headers),
     false = match("JMSXUserID = 'different user'", Headers),
 
-    true = match("JMSXDeliveryCount = 2", Headers),
-    true = match("JMSXDeliveryCount < 5", Headers),
-    false = match("JMSXDeliveryCount > 5", Headers),
-
     true = match("JMSXGroupID = 'some group ID'", Headers),
     true = match("JMSXGroupID LIKE '%group%'", Headers),
     false = match("JMSXGroupID = 'different group'", Headers),
@@ -700,9 +713,15 @@ jms_headers(_Config) ->
 
     %% Combined conditions
     true = match("JMSPriority > 5 AND JMSType LIKE '%subject'", Headers),
-    true = match("JMSXDeliveryCount < 5 OR JMSXGroupSeq > 1000", Headers),
     false = match("JMSMessageID = 'wrong-id' AND JMSCorrelationID = 'id-456'", Headers),
-    true = match("NOT (JMSXUserID = 'different user' OR JMSXGroupID = 'different group')", Headers).
+    true = match("NOT (JMSXUserID = 'different user' OR JMSXGroupID = 'different group')", Headers),
+
+    {ok, Tokens, _EndLocation} = rabbit_jms_selector_lexer:string("JMSXDeliveryCount > 1"),
+    Line = 1,
+    ?assertEqual(
+       {error, {Line, rabbit_jms_selector_parser,
+                "setting message selector on JMSXDeliveryCount is disallowed"}},
+       rabbit_jms_selector_parser:parse(Tokens)).
 
 %%%===================================================================
 %%% Helpers

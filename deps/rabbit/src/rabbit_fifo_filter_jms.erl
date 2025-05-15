@@ -9,6 +9,24 @@
 
 -export([eval/2]).
 
+%% "When used in a message selector JMSDeliveryMode is treated as having
+%% the values 'PERSISTENT' and 'NON_PERSISTENT'."
+%% https://jakarta.ee/specifications/messaging/3.1/jakarta-messaging-spec-3.1#special-notes
+-define(DELIVERY_MODE_PERSISTENT, <<"PERSISTENT">>).
+-define(DELIVERY_MODE_NON_PERSISTENT, <<"NON_PERSISTENT">>).
+-define(IS_DELIVERY_MODE(Val),
+        Val =:= ?DELIVERY_MODE_PERSISTENT orelse
+        Val =:= ?DELIVERY_MODE_NON_PERSISTENT).
+
+%% "For PERSISTENT messages, the durable field of header MUST be set to true.
+%% For NON PERSISTENT messages, the durable field of header MUST be either
+%% set to false or omitted."
+%% amqp-bindmap-jms-v1.0-wd10
+is_durable(?DELIVERY_MODE_PERSISTENT) ->
+    true;
+is_durable(?DELIVERY_MODE_NON_PERSISTENT) ->
+    false.
+
 %% Evaluates a parsed JMS message selector expression against message metadata.
 -spec eval(term(), #{atom() | binary() => atom() | binary() | number()}) ->
     boolean().
@@ -81,9 +99,9 @@ eval0({'not', Expr}, Headers) ->
 
 %% Comparison operators
 eval0({'=' = Op, Expr1, Expr2}, Headers) ->
-    compare(Op, eval0(Expr1, Headers), eval0(Expr2, Headers));
+    compare_eq(Op, eval0(Expr1, Headers), eval0(Expr2, Headers));
 eval0({'<>' = Op, Expr1, Expr2}, Headers) ->
-    compare(Op, eval0(Expr1, Headers), eval0(Expr2, Headers));
+    compare_eq(Op, eval0(Expr1, Headers), eval0(Expr2, Headers));
 eval0({'>' = Op, Expr1, Expr2}, Headers) ->
     compare(Op, eval0(Expr1, Headers), eval0(Expr2, Headers));
 eval0({'<' = Op, Expr1, Expr2}, Headers) ->
@@ -198,6 +216,13 @@ compare(_, _, _) ->
     %% "If the comparison of non-like type values is attempted,
     %% the value of the operation is false."
     false.
+
+compare_eq(Op, Left, Right) when is_boolean(Left) andalso ?IS_DELIVERY_MODE(Right) ->
+    compare(Op, Left, is_durable(Right));
+compare_eq(Op, Left, Right) when is_boolean(Right) andalso ?IS_DELIVERY_MODE(Left) ->
+    compare(Op, is_durable(Left), Right);
+compare_eq(Op, Left, Right) ->
+    compare(Op, Left, Right).
 
 arithmetic(_, undefined, _) ->
     undefined;

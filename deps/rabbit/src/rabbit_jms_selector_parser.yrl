@@ -111,7 +111,7 @@ primary -> identifier_expr : '$1'.
 
 %% Identifiers (header fields or property references)
 identifier_expr -> identifier :
-    {identifier, rabbit_amqp_util:jms_header_to_amqp_field_name(extract_value('$1'))}.
+    {identifier, process_identifier('$1')}.
 
 %% Literals
 literal -> integer : {integer, extract_value('$1')}.
@@ -122,6 +122,14 @@ literal -> boolean : {boolean, extract_value('$1')}.
 Erlang code.
 
 extract_value({_Token, _Line, Value}) -> Value.
+
+process_identifier({_Token, Line, <<"JMSXDeliveryCount">>}) ->
+    %% "A clarification has been added to state that the effect of setting a
+    %% message selector on a property (such as JMSXDeliveryCount) which is set
+    %% by the provider on receive is undefined."
+    return_error(Line, "setting message selector on JMSXDeliveryCount is disallowed");
+process_identifier({_Token, _Line, Value}) ->
+    rabbit_amqp_util:jms_header_to_amqp_field_name(Value).
 
 process_like_pattern({string, Line, Value}) ->
     case unicode:characters_to_list(Value) of

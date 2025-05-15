@@ -450,7 +450,6 @@ consumer_filter(Spec, Args, Q) ->
             error
     end.
 
-%%TODO map JMS fields to AMQP fields
 parse_jms_selector(JmsSelector) ->
     String = unicode:characters_to_list(JmsSelector),
     case rabbit_jms_selector_lexer:string(String) of
@@ -461,13 +460,13 @@ parse_jms_selector(JmsSelector) ->
                     %                  [?MODULE, ?FUNCTION_NAME, JmsSelector, Tokens, _Expr]),
                     Ok;
                 {error, Reason} ->
-                    rabbit_log:warning("failed to parse JMS Selector '~s': ~p",
+                    rabbit_log:warning("failed to parse JMS message selector '~s': ~p",
                                        [JmsSelector, Reason]),
                     error
             end;
         {error, {_Line, _Mod, ErrDescriptor}, _Locaction} ->
             Reason = lists:flatten(leex:format_error(ErrDescriptor)),
-            rabbit_log:warning("failed to scan JMS selector '~s': ~p",
+            rabbit_log:warning("failed to scan JMS message selector '~s': ~p",
                                [JmsSelector, Reason]),
             error
     end.
