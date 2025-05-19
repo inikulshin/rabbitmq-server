@@ -341,6 +341,7 @@ public class JmsTest {
       // e.g. priority is set to a value other than the default of 4.
       // Only then will the Qpid JMS client send the durable field in the AMQP header section.
       // Once https://issues.apache.org/jira/browse/QPIDJMS-608 is resolved, we can remove below line.
+      // TODO delete below line when https://github.com/rabbitmq/rabbitmq-server/pull/13918 is merged
       producer.setPriority(3);
 
       // default is DeliveryMode.PERSISTENT
