@@ -16,7 +16,7 @@
 //
 package com.rabbitmq.amqp.tests.jms;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static com.rabbitmq.amqp.tests.jms.Assertions.assertThat;
 
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -68,9 +68,8 @@ public class JmsConsumerTest {
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSPriority > 8");
       Message msg = consumer.receive(5000);
-      assertThat(msg).isNotNull().isInstanceOf(TextMessage.class);
-      assertThat(((TextMessage) msg).getText()).isEqualTo("hello + 9");
-      assertThat(consumer.receive(1000)).isNull();
+      assertThat(msg).isNotNull().hasText("hello + 9");
+      org.assertj.core.api.Assertions.assertThat(consumer.receive(1000)).isNull();
     }
   }
 
@@ -110,9 +109,7 @@ public class JmsConsumerTest {
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSType = '" + type + "'");
       Message msg = consumer.receive(5000);
-      assertThat(msg).isNotNull().isInstanceOf(TextMessage.class);
-      assertThat(msg.getJMSType()).isEqualTo(type);
-      assertThat(((TextMessage) msg).getText()).isEqualTo("text + type");
+      assertThat(msg).isNotNull().hasType(type).hasText("text + type");
     }
   }
 }

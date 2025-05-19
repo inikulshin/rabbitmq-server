@@ -16,6 +16,7 @@
 //
 package com.rabbitmq.amqp.tests.jms;
 
+import static com.rabbitmq.amqp.tests.jms.Assertions.assertThat;
 import static com.rabbitmq.amqp.tests.jms.TestUtils.protonClient;
 import static com.rabbitmq.amqp.tests.jms.TestUtils.protonConnection;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,7 +51,7 @@ public class JmsTest {
       TextMessage textMessage = session.createTextMessage(msg1);
       producer.send(textMessage);
       TextMessage receivedTextMessage = (TextMessage) consumer.receive(5000);
-      assertThat(receivedTextMessage.getText()).isEqualTo(msg1);
+      assertThat(receivedTextMessage).hasText(msg1);
 
       // BytesMessage
       String msg2 = "msg2";
@@ -174,8 +175,8 @@ public class JmsTest {
             .send(serverRequestMessage.getJMSReplyTo(), serverResponseMessage);
       }
 
-      TextMessage clientResponseMessage = (TextMessage) clientConsumer.receive(5000);
-      assertThat(clientResponseMessage.getText()).isEqualTo("HELLO");
+      Message clientResponseMessage = clientConsumer.receive(5000);
+      assertThat(clientResponseMessage).hasText("HELLO");
     }
   }
 
@@ -351,16 +352,14 @@ public class JmsTest {
       producer.send(msg2);
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSDeliveryMode <> 'PERSISTENT'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("msg 2");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("msg 2");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSDeliveryMode = 'PERSISTENT'");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("msg 1");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("msg 1");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
@@ -379,16 +378,14 @@ public class JmsTest {
       // Let's test that matching JMSDeliveryMode works not only with string literals
       // but also with other identifiers that have a string value.
       consumer = session.createConsumer(queue, "key2 = JMSDeliveryMode");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("msg 4");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("msg 4");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "key1 = JMSDeliveryMode");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("msg 3");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("msg 3");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
@@ -398,14 +395,14 @@ public class JmsTest {
   private void testJMSPriority(Session session, Queue queue) throws Exception {
       // "The message producer's default priority is 4."
       MessageProducer producer = session.createProducer(queue);
-      TextMessage msg = session.createTextMessage("Default Priority");
-      producer.send(msg);
+      TextMessage outMsg = session.createTextMessage("Default Priority");
+      producer.send(outMsg);
       // "Jakarta Messaging defines a ten level priority value
       // with 0 as the lowest priority and 9 as the highest."
       for (int i = 0; i <= 9; i++) {
-          msg = session.createTextMessage("Priority " + i);
+          outMsg = session.createTextMessage("Priority " + i);
           producer.setPriority(i);
-          producer.send(msg);
+          producer.send(outMsg);
       }
       producer.close();
 
@@ -421,40 +418,36 @@ public class JmsTest {
       // <= 4 and > 4.
 
       consumer = session.createConsumer(queue, "JMSPriority = 4");
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg).isNotNull();
-      assertThat(msg.getText()).isEqualTo("Default Priority");
-      assertThat(msg.getJMSPriority()).isEqualTo(4);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg).isNotNull();
-      assertThat(msg.getText()).isEqualTo("Priority 4");
-      assertThat(msg.getJMSPriority()).isEqualTo(4);
+      Message msg = consumer.receive(9000);
+      assertThat(msg).isNotNull().hasText("Default Priority").hasPriority(4);
+      msg = consumer.receive(9000);
+      assertThat(msg).isNotNull().hasText("Priority 4").hasPriority(4);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSPriority >= 5");
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(5);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(6);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(7);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(8);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(9);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(5);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(6);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(7);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(8);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(9);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSPriority BETWEEN 0 AND 3");
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(0);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(1);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(2);
-      msg = (TextMessage) consumer.receive(9000);
-      assertThat(msg.getJMSPriority()).isEqualTo(3);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(0);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(1);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(2);
+      msg = consumer.receive(9000);
+      assertThat(msg).hasPriority(3);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
   }
@@ -471,18 +464,14 @@ public class JmsTest {
       producer.close();
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSMessageID = '" + messageId2 + "'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 2");
-      assertThat(received.getJMSMessageID()).isEqualTo(messageId2);
-      assertThat(consumer.receive(10)).isNull();
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 2").hasId(messageId2);
+      org.assertj.core.api.Assertions.assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSMessageID = '" + messageId1 + "'");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 1");
-      assertThat(received.getJMSMessageID()).isEqualTo(messageId1);
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 1").hasId(messageId1);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
   }
@@ -502,18 +491,14 @@ public class JmsTest {
       producer.close();
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSTimestamp > " + timestamp1);
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Later Message");
-      assertThat(received.getJMSTimestamp()).isEqualTo(timestamp2);
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Later Message").hasTimestamp(timestamp2);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSTimestamp <= " + timestamp1);
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Early Message");
-      assertThat(received.getJMSTimestamp()).isEqualTo(timestamp1);
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Early Message").hasTimestamp(timestamp1);
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
   }
@@ -534,33 +519,26 @@ public class JmsTest {
       producer.close();
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSCorrelationID LIKE 'correlation-%'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 1");
-      assertThat(received.getJMSCorrelationID()).isEqualTo("correlation-123");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 2");
-      assertThat(received.getJMSCorrelationID()).isEqualTo("correlation-456");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 1").hasCorrelationId("correlation-123");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 2").hasCorrelationId("correlation-456");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSCorrelationID IS NOT NULL");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 4");
-      assertThat(received.getJMSCorrelationIDAsBytes()).isEqualTo(new byte[]{0, 1, 2});
-      // That's what we expect according section 3.2.1.1 of amqp-bindmap-jms-v1.0-wd10
-      assertThat(received.getJMSCorrelationID()).isEqualTo("ID:AMQP_BINARY:000102");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 4").hasCorrelationId(new byte[]{0, 1, 2})
+          // That's what we expect according section 3.2.1.1 of amqp-bindmap-jms-v1.0-wd10
+          .hasCorrelationId("ID:AMQP_BINARY:000102");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSCorrelationID IS NULL");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Message 3");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Message 3");
       assertThat(received.getJMSCorrelationID()).isNull();
-      assertThat(consumer.receive(10)).isNull();
+      org.assertj.core.api.Assertions.assertThat(consumer.receive(10)).isNull();
       consumer.close();
   }
 
@@ -581,26 +559,21 @@ public class JmsTest {
       producer.close();
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSType = 'type-1'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Type 1 Message");
-      assertThat(received.getJMSType()).isEqualTo("type-1");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Type 1 Message").hasType("type-1");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSType IS NULL");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("No Type Message");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("No Type Message");
       assertThat(received.getJMSType()).isNull();
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSType IN ('type-1', 'type-2')");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Type 2 Message");
-      assertThat(received.getJMSType()).isEqualTo("type-2");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Type 2 Message").hasType("type-2");
       assertThat(consumer.receive(10)).isNull();
       consumer.close();
   }
@@ -615,10 +588,9 @@ public class JmsTest {
       producer.send(msg);
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSXUserID = 'guest'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("m1");
-      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("m1")
+          .hasProperty("JMSXUserID", "guest");
       consumer.close();
 
       msg = session.createTextMessage("m2");
@@ -629,20 +601,18 @@ public class JmsTest {
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSXUserID LIKE 'gues_'");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("m2");
-      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("m2")
+          .hasProperty("JMSXUserID", "guest");
       consumer.close();
 
       msg = session.createTextMessage("m3");
       producer.send(msg);
 
       consumer = session.createConsumer(queue, "JMSXUserID IN ('other', 'guest')");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("m3");
-      assertThat(received.getStringProperty("JMSXUserID")).isEqualTo("guest");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("m3")
+          .hasProperty("JMSXUserID", "guest");
       consumer.close();
 
       producer.close();
@@ -662,17 +632,15 @@ public class JmsTest {
       producer.close();
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSXAppID LIKE '%2'");
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("m2");
-      assertThat(received.getStringProperty("JMSXAppID")).isEqualTo("myapp 2");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("m2")
+              .hasProperty("JMSXAppID", "myapp 2");
       consumer.close();
 
       consumer = session.createConsumer(queue, "'myapp 2' <> JMSXAppID");
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("m1");
-      assertThat(received.getStringProperty("JMSXAppID")).isEqualTo("myapp 1");
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("m1")
+              .hasProperty("JMSXAppID", "myapp 1");
       consumer.close();
   }
 
@@ -698,27 +666,25 @@ public class JmsTest {
 
       MessageConsumer consumer = session.createConsumer(queue, "JMSXGroupID = 'group-A'");
 
-      TextMessage received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Group A Message 1");
-      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-A");
+      Message received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Group A Message 1")
+          .hasProperty("JMSXGroupID", "group-A")
+          .hasProperty("JMSXGroupSeq", 1);
       assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(1);
 
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Group A Message 2");
-      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-A");
-      assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(2);
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Group A Message 2")
+          .hasProperty("JMSXGroupID", "group-A")
+          .hasProperty("JMSXGroupSeq", 2);
 
       consumer.close();
 
       consumer = session.createConsumer(queue, "JMSXGroupSeq > 1000000000");
 
-      received = (TextMessage) consumer.receive(9000);
-      assertThat(received).isNotNull();
-      assertThat(received.getText()).isEqualTo("Group B Message");
-      assertThat(received.getStringProperty("JMSXGroupID")).isEqualTo("group-B");
-      assertThat(received.getIntProperty("JMSXGroupSeq")).isEqualTo(2_000_000_000);
+      received = consumer.receive(9000);
+      assertThat(received).isNotNull().hasText("Group B Message")
+          .hasProperty("JMSXGroupID", "group-B")
+          .hasProperty("JMSXGroupSeq", 2_000_000_000);
 
       consumer.close();
     }
