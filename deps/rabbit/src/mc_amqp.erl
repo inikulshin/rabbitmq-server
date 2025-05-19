@@ -259,10 +259,10 @@ get_property(durable, Msg) ->
         _ ->
             %% fallback in case the source protocol was old AMQP 0.9.1
             case message_annotation(<<"x-basic-delivery-mode">>, Msg, undefined) of
-                {ubyte, 1} ->
-                    false;
+                {ubyte, 2} ->
+                    true;
                 _ ->
-                    true
+                    false
             end
     end;
 get_property(timestamp, Msg) ->
@@ -319,10 +319,7 @@ protocol_state(#msg_body_encoded{header = Header0,
     [encode(Sections), BareAndFooter];
 protocol_state(#v1{message_annotations = MA0,
                    bare_and_footer = BareAndFooter}, Anns) ->
-    Durable = case Anns of
-                  #{?ANN_DURABLE := D} -> D;
-                  _ -> true
-              end,
+    Durable = maps:get(?ANN_DURABLE, Anns, true),
     Priority = case Anns of
                    #{?ANN_PRIORITY := P}
                      when is_integer(P) ->
@@ -667,7 +664,9 @@ binary_part_bare_and_footer(Payload, Start) ->
     binary_part(Payload, Start, byte_size(Payload) - Start).
 
 update_header_from_anns(undefined, Anns) ->
-    update_header_from_anns(#'v1_0.header'{durable = true}, Anns);
+    Durable = maps:get(?ANN_DURABLE, Anns, true),
+    Header = #'v1_0.header'{durable = Durable},
+    update_header_from_anns(Header, Anns);
 update_header_from_anns(Header, Anns) ->
     DeliveryCount = case Anns of
                         #{delivery_count := C} -> C;
